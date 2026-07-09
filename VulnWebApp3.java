@@ -10,9 +10,18 @@ import java.net.URL;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Hashtable;
+import java.util.List;
+import java.util.Set;
 
 public class CriticalVulnerabilities {
+
+    // Allowlist of permitted commands to prevent command injection.
+    // Only safe, known commands may be executed; all others are rejected.
+    private static final Set<String> ALLOWED_COMMANDS =
+            new HashSet<>(Arrays.asList("uptime", "date", "hostname"));
 
     // 1. SQL Injection (High/Critical)
     public void searchUser(HttpServletRequest request) throws Exception {
@@ -31,14 +40,23 @@ public class CriticalVulnerabilities {
                         + username + "'");
     }
 
-    // 2. Command Injection (High/Critical)
+    // 2. Command Injection (High/Critical) — FIXED
+    // Uses an explicit allowlist to accept only known-safe commands, then
+    // executes via ProcessBuilder with a String[] argv so the OS never
+    // interprets the value through a shell (no shell=true / Runtime.exec(String)).
     public void execute(HttpServletRequest request)
             throws Exception {
 
-        String command =
-                request.getParameter("cmd");
+        String command = request.getParameter("cmd");
 
-        Runtime.getRuntime().exec(command);
+        // Reject any command not on the allowlist.
+        if (command == null || !ALLOWED_COMMANDS.contains(command)) {
+            throw new IllegalArgumentException("Command not permitted: " + command);
+        }
+
+        // Execute as an argv list — ProcessBuilder never invokes a shell,
+        // so no shell metacharacters (;, |, &, $, `, etc.) can be injected.
+        new ProcessBuilder(List.of(command)).start();
     }
 
     // 3. SSRF (High)
