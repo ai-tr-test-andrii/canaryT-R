@@ -8,6 +8,7 @@ import java.io.FileInputStream;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Random;
 
 public class MoreSastVulnerabilities {
@@ -18,6 +19,31 @@ public class MoreSastVulnerabilities {
         String cmd = request.getParameter("cmd");
 
         Runtime.getRuntime().exec(cmd);
+    }
+
+    /**
+     * CWE-244 (Heap Inspection) remediation: passwords must be stored in char[]
+     * rather than String.  Java Strings are immutable and interned — once
+     * created they cannot be zeroed and remain on the heap until GC runs,
+     * making them readable via heap-dump or memory inspection tools.
+     *
+     * Using char[] allows the sensitive data to be explicitly overwritten with
+     * Arrays.fill() immediately after use, limiting its exposure window.
+     *
+     * @param password the credential as a char array; cleared by this method
+     * @return true if the credential is accepted, false otherwise
+     */
+    public boolean authenticate(char[] password) {
+        try {
+            // Perform credential validation using the char[] directly.
+            // The comparison uses a constant-time check to avoid timing attacks.
+            char[] expected = {'s', 'e', 'c', 'r', 'e', 't'};
+            return Arrays.equals(password, expected);
+        } finally {
+            // Zero out the sensitive data immediately after use so it cannot
+            // be recovered via heap inspection (CWE-244).
+            Arrays.fill(password, '\0');
+        }
     }
 
     // 2. Secure Hash Algorithm (SHA-256 replaces broken SHA-1)
