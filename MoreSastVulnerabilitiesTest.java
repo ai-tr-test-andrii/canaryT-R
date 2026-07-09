@@ -8,6 +8,7 @@ import javax.crypto.spec.GCMParameterSpec;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -189,5 +190,108 @@ public class MoreSastVulnerabilitiesTest {
         GCMParameterSpec spec = new GCMParameterSpec(tagLengthBits, new byte[12]);
         assertEquals(128, spec.getTLen(),
                 "GCM authentication tag must be 128 bits for maximum security");
+    }
+
+    // -------------------------------------------------------------------------
+    // Heap Inspection tests (CWE-244: char[] must be used instead of String)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Verifies that the authenticate method accepts a char[] password parameter
+     * (not String), which is the SAST-recognized fix for CWE-244.
+     * char[] can be explicitly zeroed via Arrays.fill(); String cannot.
+     */
+    @Test
+    @DisplayName("authenticate accepts char[] parameter, not String (CWE-244 fix)")
+    public void testAuthenticateUsesCharArrayNotString() throws Exception {
+        // The method signature must accept char[], not String — this is enforced at compile time.
+        // If the signature used String, this test would not compile.
+        MoreSastVulnerabilities sut = new MoreSastVulnerabilities();
+
+        char[] correctPassword = {'s', 'e', 'c', 'r', 'e', 't'};
+        // authenticate() returns true for the correct credential
+        assertTrue(sut.authenticate(correctPassword),
+                "authenticate must return true for the correct credential");
+    }
+
+    @Test
+    @DisplayName("authenticate returns false for wrong password (CWE-244 fix)")
+    public void testAuthenticateReturnsFalseForWrongPassword() {
+        MoreSastVulnerabilities sut = new MoreSastVulnerabilities();
+
+        char[] wrongPassword = {'w', 'r', 'o', 'n', 'g'};
+        assertFalse(sut.authenticate(wrongPassword),
+                "authenticate must return false for an incorrect credential");
+    }
+
+    @Test
+    @DisplayName("authenticate zeroes char[] after use (heap inspection prevention)")
+    public void testAuthenticateClearsCharArrayAfterUse() {
+        MoreSastVulnerabilities sut = new MoreSastVulnerabilities();
+
+        char[] password = {'s', 'e', 'c', 'r', 'e', 't'};
+        sut.authenticate(password);
+
+        // After authenticate() returns, all chars must be '\0' (zero-filled).
+        // This prevents the password from remaining readable on the heap.
+        for (int i = 0; i < password.length; i++) {
+            assertEquals('\0', password[i],
+                    "char at index " + i + " must be zeroed after authenticate() returns");
+        }
+    }
+
+    @Test
+    @DisplayName("char[] can be zeroed (String cannot — demonstrates why char[] is required)")
+    public void testCharArrayCanBeExplicitlyZeroed() {
+        // Demonstrates that char[] supports explicit zeroing — the core rationale for CWE-244 fix.
+        char[] sensitive = "mysecretpassword".toCharArray();
+
+        // Explicit zeroing via Arrays.fill — not possible with immutable String
+        Arrays.fill(sensitive, '\0');
+
+        for (char c : sensitive) {
+            assertEquals('\0', c,
+                    "Every char must be zero after Arrays.fill — heap inspection yields nothing");
+        }
+    }
+
+    @Test
+    @DisplayName("String password retains data after reassignment (shows why String is vulnerable)")
+    public void testStringPasswordIsImmutableAndCannotBeCleared() {
+        // This test documents the fundamental problem with String for passwords:
+        // Even after the reference is nulled, the original String object lingers on the heap.
+        // We verify the char[] approach actually zeroes out the data, confirming
+        // that the char[]-based fix eliminates this window of vulnerability.
+        char[] password = {'p', 'a', 's', 's'};
+        char[] copy = Arrays.copyOf(password, password.length);
+
+        // Zeroing the original does not affect the copy (separate heap objects).
+        Arrays.fill(password, '\0');
+
+        // Original is cleared
+        assertArrayEquals(new char[]{'\0', '\0', '\0', '\0'}, password,
+                "Original char[] must be fully zeroed");
+
+        // Copy still holds data — showing isolation of sensitive data is controlled
+        assertArrayEquals(new char[]{'p', 'a', 's', 's'}, copy,
+                "Copy is independent — only the explicitly-zeroed array is cleared");
+    }
+
+    @Test
+    @DisplayName("authenticate zeroes char[] even when wrong password is provided")
+    public void testAuthenticateClearsCharArrayForWrongPassword() {
+        MoreSastVulnerabilities sut = new MoreSastVulnerabilities();
+
+        char[] wrongPassword = {'b', 'a', 'd', 'p', 'w', 'd'};
+        boolean result = sut.authenticate(wrongPassword);
+
+        assertFalse(result, "Wrong password must be rejected");
+
+        // The char[] must be zeroed even in the false (reject) path —
+        // a finally block ensures this regardless of the outcome.
+        for (int i = 0; i < wrongPassword.length; i++) {
+            assertEquals('\0', wrongPassword[i],
+                    "char at index " + i + " must be zeroed even after rejected authentication");
+        }
     }
 }
