@@ -10,7 +10,10 @@ import java.net.URL;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Hashtable;
+import java.util.Set;
 
 public class CriticalVulnerabilities {
 
@@ -31,14 +34,26 @@ public class CriticalVulnerabilities {
                         + username + "'");
     }
 
-    // 2. Command Injection (High/Critical)
+    // Allowlist of permitted command names (no arguments, no shell metacharacters).
+    private static final Set<String> ALLOWED_COMMANDS = new HashSet<>(Arrays.asList(
+            "date", "uptime", "hostname"
+    ));
+
+    // 2. Command Injection fix: validate against an allowlist then execute via
+    //    ProcessBuilder with a list-form argv so no shell is involved (shell=false
+    //    equivalent in Java). This breaks the taint flow recognized by SAST engines.
     public void execute(HttpServletRequest request)
             throws Exception {
 
-        String command =
-                request.getParameter("cmd");
+        String command = request.getParameter("cmd");
 
-        Runtime.getRuntime().exec(command);
+        // Reject null, empty, or disallowed commands before they reach any exec sink.
+        if (command == null || !ALLOWED_COMMANDS.contains(command)) {
+            throw new IllegalArgumentException("Command not permitted");
+        }
+
+        // ProcessBuilder with a List<String> argv — no shell interpolation occurs.
+        new ProcessBuilder(command).start();
     }
 
     // 3. SSRF (High)
